@@ -15,7 +15,10 @@ deep thinking on one scoped question.
 cd /path/to/opus-consultant
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-export ANTHROPIC_API_KEY=sk-ant-...   # env only — never write it to a file
+# Auth: either export ANTHROPIC_API_KEY=sk-ant-... (env only — never write it
+# to a file), or sign the Claude Code CLI in once with `claude auth login`
+# and skip the key entirely — the SDK delegates auth to the CLI, so a Claude
+# subscription works.
 ```
 
 ## When to consult
@@ -47,7 +50,10 @@ anything where the context can't be packaged into a prompt + files.
 - Default caps: **$3.00** and **8 turns** per consultation
   (`CONSULTANT_MAX_BUDGET_USD`, `CONSULTANT_MAX_TURNS`, or the flags).
 - Tools are read-only (`read_file`, `list_dir`, `grep`) unless you pass
-  `--allow-shell`. The shell is timeout-bounded and cwd-jailed.
+  `--allow-shell`. The shell is timeout-bounded and cwd-jailed. The model is
+  allow-listed to exactly these tools, so the CLI's built-in tools (Bash,
+  Write, …) are not reachable — the read-only guarantee holds by
+  construction, not just by prompting.
 - `--dry-run` shows exactly what would be sent before spending anything.
 - The API key lives in the environment only. Never echo it, log it, or put
-  it in a file.
+  it in a file. With `claude auth login` there is no key at all.
