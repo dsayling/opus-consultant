@@ -7,9 +7,11 @@ of scoped, read-only tools and returns a recommendation.
 
 The API key is read ONLY from the ANTHROPIC_API_KEY environment variable.
 It is never written to disk, never logged, and never echoed.
+Alternatively, sign the Claude Code CLI in (`claude auth login`) — the Agent
+SDK delegates auth to the CLI, so a subscription login works with no API key.
 
 Usage:
-    export ANTHROPIC_API_KEY=sk-ant-...
+    export ANTHROPIC_API_KEY=sk-ant-...   # or: claude auth login
     python consult.py --task "Is this caching approach sound?" \
         --context ./notes.md --workdir ./myrepo --json
 """
@@ -40,6 +42,23 @@ READ_CHAR_LIMIT = 100_000
 GREP_RESULT_LIMIT = 50
 SHELL_OUTPUT_LIMIT = 20_000
 SKIP_DIRS = {".git", ".venv", "venv", "node_modules", "__pycache__", ".hg", ".svn"}
+
+# Key of the consultant MCP server in ClaudeAgentOptions.mcp_servers. The CLI
+# exposes its tools as mcp__<key>__<tool>; allowed_tools is derived from this.
+MCP_SERVER_KEY = "consultant"
+
+
+def _has_cli_auth() -> bool:
+    """True when the Claude Code CLI has stored credentials (e.g. `claude auth login`).
+
+    The Agent SDK delegates auth to the CLI, so a subscription login works
+    with no API key at all.
+    """
+    creds = Path.home() / ".claude" / ".credentials.json"
+    try:
+        return creds.is_file() and creds.stat().st_size > 0
+    except OSError:
+        return False
 
 
 CONSULTANT_SYSTEM_PROMPT = """\
@@ -200,13 +219,21 @@ async def run_consultation(args) -> dict:
     tools = build_tools(workdir, args.allow_shell, args.shell_timeout)
     server = create_sdk_mcp_server("consultant-tools", tools=tools)
 
+    # Scope the model to exactly the consultant tool surface. This both
+    # auto-approves the read-only tools (no prompts, non-interactive) and
+    # hides the CLI's built-in tools, so the "read-only" guarantee holds.
+    # (bypassPermissions would do the first but not the second — and the CLI
+    # refuses it under root/sudo anyway.)
+    allowed_tools = [f"mcp__{MCP_SERVER_KEY}__{t.name}" for t in tools]
+
     options = ClaudeAgentOptions(
         model=args.model,
         system_prompt=CONSULTANT_SYSTEM_PROMPT,
-        mcp_servers={"consultant": server},
+        mcp_servers={MCP_SERVER_KEY: server},
+        allowed_tools=allowed_tools,
         max_turns=args.max_turns,
         max_budget_usd=args.max_budget_usd,
-        permission_mode="bypassPermissions",  # safe: tool surface is read-only unless --allow-shell
+        permission_mode="acceptEdits",  # no prompts; the allow-list above is the real guardrail
         cwd=str(workdir),
     )
 
@@ -223,8 +250,12 @@ async def run_consultation(args) -> dict:
         }
 
     api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise SystemExit("ANTHROPIC_API_KEY is not set. Export it; it is never written to disk.")
+    if not api_key and not _has_cli_auth():
+        raise SystemExit(
+            "No Anthropic auth found. Either export ANTHROPIC_API_KEY "
+            "(env only — it is never written to disk) or sign the Claude Code "
+            "CLI in with `claude auth login`."
+        )
 
     result_text = ""
     summary: dict = {"is_error": True, "result": "no ResultMessage received"}
